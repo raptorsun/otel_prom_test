@@ -19,6 +19,7 @@ const (
 	PortExporterHTTP     = 34688
 	ExePathOtelCollector = "/home/hsun/opentelemetry-collector-contrib/bin/otelcontribcol_linux_amd64"
 	ExePathPrometheus    = "/home/hsun/prometheus/prometheus"
+	SamplesPerSecond     = 7000
 )
 
 func main() {
@@ -52,6 +53,7 @@ func sendToPrometheus() {
 	// configStr := createConfigYaml(sender, receiver, resultDir, nil, nil)
 	// remote write
 	// configStr := createConfigOtelRemoteWriteYaml(sender, receiver, resultDir, nil, nil)
+	// otel native
 	configStr := createConfigOtelNativeeYaml(sender, receiver, resultDir, nil, nil)
 	log.Printf("Otel Config: %s", configStr)
 	configCleanupOtel, err := agentProc.PrepareConfig(configStr)
@@ -74,7 +76,7 @@ func sendToPrometheus() {
 	defer configCleanUpProm()
 
 	options := testbed.LoadOptions{
-		DataItemsPerSecond: 10_000,
+		DataItemsPerSecond: SamplesPerSecond,
 		ItemsPerBatch:      100,
 		Parallel:           1,
 	}
@@ -114,12 +116,14 @@ func sendToPrometheus() {
 
 	scenario.StopAgent()
 	scenario.StopPrometheus()
-	tenMetrics := scenario.MockBackend.ReceivedMetrics[0:3]
-	for _, metric := range tenMetrics {
-		rm := metric.ResourceMetrics()
+	scenario.RemovePrometheusData("./data")
 
-		log.Printf("metric: %v", rm.At(0).Resource().Attributes().AsRaw())
-	}
+	// tenMetrics := scenario.MockBackend.ReceivedMetrics[0:3]
+	// for _, metric := range tenMetrics {
+	// 	rm := metric.ResourceMetrics()
+
+	// 	log.Printf("metric: %v", rm.At(0).Resource().Attributes().AsRaw())
+	// }
 
 	// tc.ValidateData()
 }

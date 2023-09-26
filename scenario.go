@@ -278,6 +278,16 @@ func (scenario *Scenario) StopPrometheus() {
 	if _, err := scenario.promRunner.Stop(); err != nil {
 		scenario.indicateError(err)
 	}
+
+}
+
+// RemotePrometheusData removes Prometheus directory.
+func (scenario *Scenario) RemovePrometheusData(path string) {
+	if path == "" {
+		path = "./data"
+	}
+	pr, _ := scenario.promRunner.(*PrometheusRunner)
+	pr.CleanDataDir(path)
 }
 
 // StartLoad starts the load generator and redirects its standard output and standard error

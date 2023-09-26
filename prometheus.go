@@ -519,6 +519,14 @@ func (cp *PrometheusRunner) GetTotalConsumption() *testbed.ResourceConsumption {
 	return rc
 }
 
+func (cp *PrometheusRunner) CleanDataDir(dataDirPath string) {
+	dataDirPath, err := filepath.Abs(dataDirPath)
+	if err != nil {
+		return
+	}
+	os.RemoveAll(dataDirPath)
+}
+
 func containsConfig(s []string) bool {
 	for _, a := range s {
 		if a == "--config.file" {
