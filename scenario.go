@@ -24,8 +24,10 @@ type Scenario struct {
 	// Resource spec for agent.
 	resourceSpec testbed.ResourceSpec
 
-	// Agent process.
+	// Agent process. Otel Collector Runner
 	agentProc testbed.OtelcolRunner
+	// Agent process. Prometheus Runner
+	promRunner testbed.OtelcolRunner
 
 	Sender   testbed.DataSender
 	receiver testbed.DataReceiver
@@ -53,6 +55,7 @@ func NewScenario(
 	sender testbed.DataSender,
 	receiver testbed.DataReceiver,
 	agentProc testbed.OtelcolRunner,
+	promRunner testbed.OtelcolRunner,
 	validator testbed.TestCaseValidator,
 	resultsSummary testbed.TestResultsSummary,
 	resourceSpec testbed.ResourceSpec,
@@ -65,6 +68,7 @@ func NewScenario(
 		Sender:       sender,
 		receiver:     receiver,
 		agentProc:    agentProc,
+		promRunner:   promRunner,
 		resourceSpec: resourceSpec,
 	}
 
@@ -127,8 +131,9 @@ func (scenario *Scenario) logStats() {
 }
 
 func (scenario *Scenario) logStatsOnce() {
-	log.Printf("%s | %s | %s",
+	log.Printf("%s | %s | %s | %s",
 		scenario.agentProc.GetResourceConsumption(),
+		scenario.promRunner.GetResourceConsumption(),
 		scenario.LoadGenerator.GetStats(),
 		scenario.MockBackend.GetStats())
 }
@@ -142,6 +147,7 @@ func (scenario *Scenario) Stop() {
 	scenario.StopLoad()
 	scenario.StopAgent()
 	scenario.StopBackend()
+	scenario.StopPrometheus()
 
 	if scenario.skipResults {
 		return
@@ -181,6 +187,8 @@ func (scenario *Scenario) StartAgent(args ...string) {
 		CmdArgs:     args,
 		// resourceSpec: &scenario.resourceSpec,
 	}
+	startParams.SetResourceSpec(&scenario.resourceSpec)
+
 	if err := scenario.agentProc.Start(startParams); err != nil {
 		scenario.indicateError(err)
 		return
@@ -210,9 +218,64 @@ func (scenario *Scenario) StartAgent(args ...string) {
 	}
 }
 
+// StartPrometheus starts the agent and redirects its standard output and standard error
+// to "agent.log" file located in the test directory.
+func (scenario *Scenario) StartPrometheus(args ...string) {
+	logFileName := scenario.composeTestResultFileName("prometheus.log")
+
+	startParams := testbed.StartParams{
+		Name:        "Prometheus",
+		LogFilePath: logFileName,
+		CmdArgs:     args,
+		// resourceSpec: &scenario.resourceSpec,
+	}
+	startParams.SetResourceSpec(&scenario.resourceSpec)
+
+	if err := scenario.promRunner.Start(startParams); err != nil {
+		scenario.indicateError(err)
+		return
+	}
+
+	// Start watching resource consumption.
+	go func() {
+		if err := scenario.promRunner.WatchResourceConsumption(); err != nil {
+			scenario.indicateError(err)
+		}
+	}()
+
+	// endpoint := scenario.Sender.GetEndpoint()
+	endpoint, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("127.0.0.1:%d", PortPrometheus))
+	if err != nil {
+		scenario.indicateError(err)
+		return
+	}
+
+	if endpoint != nil {
+		// Wait for Prometheus to start. We consider the Prometheus started when we can
+		// connect to the port to which we intend to send load. We only do this
+		// if the endpoint is not-empty, i.e. the sender does use network (some senders
+		// like text log writers don't).
+		scenario.WaitForN(func() bool {
+			conn, err := net.Dial(endpoint.Network(), endpoint.String())
+			if err == nil && conn != nil {
+				conn.Close()
+				return true
+			}
+			return false
+		}, time.Second*10, fmt.Sprintf("connection to %s:%s", endpoint.Network(), endpoint.String()))
+	}
+}
+
 // StopAgent stops agent process.
 func (scenario *Scenario) StopAgent() {
 	if _, err := scenario.agentProc.Stop(); err != nil {
+		scenario.indicateError(err)
+	}
+}
+
+// StopPrometheus stops prometheus process.
+func (scenario *Scenario) StopPrometheus() {
+	if _, err := scenario.promRunner.Stop(); err != nil {
 		scenario.indicateError(err)
 	}
 }
@@ -230,6 +293,7 @@ func (scenario *Scenario) StopLoad() {
 
 // StartBackend starts the specified backend type.
 func (scenario *Scenario) StartBackend() {
+	scenario.MockBackend.EnableRecording()
 	err := scenario.MockBackend.Start()
 	if err != nil {
 		log.Fatalf("Cannot start backend: %s", err.Error())
@@ -269,7 +333,7 @@ func (scenario *Scenario) WaitForN(cond func() bool, duration time.Duration, err
 
 		if time.Since(startTime) > duration {
 			// Waited too long
-			log.Fatalf("Time out waiting for", errMsg)
+			log.Fatalf("Time out waiting for %s", errMsg)
 			return false
 		}
 	}
